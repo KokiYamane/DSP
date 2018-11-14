@@ -1,0 +1,229 @@
+/////////////////////////////////////////////////////
+// 16bit,8000Hz,1チャネル,PCM版：（あくまで参考:自己責任で）
+//  (c) Y
+/////////////////////////////////////////////////////
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+/////////////////////////////////////////////////////
+// RIFFチャンクおよびWAVEフォームタイプ構造体
+/////////////////////////////////////////////////////
+typedef struct{
+	char id[4];			// "RIFF"
+	unsigned long size;		// ファイルサイズ-8
+	char form[4];			// "WAVE"
+} riff_chunk;
+/////////////////////////////////////////////////////
+// fmtチャンク構造体
+/////////////////////////////////////////////////////
+typedef struct{
+	char id[4];			// "fmt "
+	unsigned long size;		// fmt領域のサイズ
+	unsigned short format_id;	// フォーマットID (PCM:1)
+	unsigned short channel;		// チャネル数 (モノラル:1 ステレオ:2)
+	unsigned long  fs;		// サンプリング周波数
+	unsigned long  byte_sec;	// １秒あたりのバイト数（fs×byte_samp)
+	unsigned short byte_samp;	// １要素のバイト数（channel×(bit/8)）
+	unsigned short bit;		// 量子化ビット数（8 or 16）
+} fmt_chunk;
+/////////////////////////////////////////////////////
+// factチャンク構造体
+/////////////////////////////////////////////////////
+typedef struct{
+	char id[4];			// "fact"
+	unsigned long size;		// factデータ領域のサイズ (4)
+	unsigned long sample;		// 全データ数
+} fact_chunk;
+/////////////////////////////////////////////////////
+// dataチャンク構造体
+/////////////////////////////////////////////////////
+typedef struct{
+	char id[4];			// "data"
+	unsigned long size;		// data領域のサイズ
+					// PCMデータ保存領域は後で確保（実際はshort型）
+} data_chunk;
+/////////////////////////////////////////////////////
+// 関数のプロトタイプ宣言
+/////////////////////////////////////////////////////
+void debug(void);				// ヘッダ確認用
+void wave_to_text(double *,FILE *, FILE *);	// WAVEファイルからTEXTファイルへ
+void text_to_wave(double *,FILE *, FILE *);	// TEXTファイルからWAVEファイルへ
+/////////////////////////////////////////////////////
+// パブリック宣言
+/////////////////////////////////////////////////////
+	riff_chunk riff;
+	fmt_chunk fmt;
+	fact_chunk fact;
+	data_chunk data;
+/////////////////////////////////////////////////////
+// メイン関数
+/////////////////////////////////////////////////////
+int main()
+{
+	char in_name[256], out_name[256];	//入出力ファイル用
+	char buff[5],f_mode1[3],f_mode2[3];
+	double *pcm_data=NULL;
+	int i=0,j,sw=0;
+
+/////////////////////////////////////////////////////
+// ファイルの入出力関係
+/////////////////////////////////////////////////////
+
+    char mode = 0;
+    printf("wave_to_text:0\ntext_to_wave:1\n");
+    mode = getchar();
+
+    if(!mode){
+        //読み込みファイルオープン
+        FILE *read;
+        read = fopen("sample.wav","rb");
+        if(read == NULL) {
+            printf("read file can not open.");
+            exit(1);
+        }
+
+        //書き込みファイルオープン
+        FILE *write;
+        write = fopen("1-6_out.txt","w");
+        if(read == NULL) {
+            printf("write file can not open.");
+            exit(1);
+        }
+        
+        wave_to_text(pcm_data, read, write);
+
+        fclose(read);
+        fclose(write);
+
+    } else {
+        //読み込みファイルオープン
+        FILE *read;
+        read = fopen("sample_part.txt","r");
+        if(read == NULL) {
+            printf("read file can not open.");
+            exit(1);
+        }
+
+        //書き込みファイルオープン
+        FILE *write;
+        write = fopen("1-6_out.wav","wb");
+        if(read == NULL) {
+            printf("write file can not open.");
+            exit(1);
+        }
+        
+        text_to_wave(pcm_data, read, write);
+
+        fclose(read);
+        fclose(write);
+
+    }
+}
+
+
+/////////////////////////////////////////////////////
+// WAVE からTEXTへ変換する関数
+/////////////////////////////////////////////////////
+void wave_to_text(double *pcm_data, FILE *read, FILE *write)
+{
+	short short_data;
+	char buff[5];
+	unsigned long i;
+/////////////////////////////////////////////////////
+//各サブチャンクの読み込み
+/////////////////////////////////////////////////////
+	fseek(read,0,SEEK_SET);			//ファイル読み込み位置をファイルの先頭バイトへ
+	fread(&riff, sizeof(riff_chunk),1,read);//RIFFチャンクWAVEフォームを読み込む
+	fread(&fmt, sizeof(fmt_chunk),1,read);	//fmtチャンクを読み込む
+	fseek(read,20+fmt.size,SEEK_SET);	//ファイル読み込み位置を次のチャンクの先頭へ
+	fread(buff, sizeof(char),4,read);	//チャンクIDを読み込みfactかdataかチェック
+	fseek(read,20+fmt.size,SEEK_SET);	//ファイル読み込み位置を次のチャンクの先頭へ再セット
+	buff[4]='\0';
+	if(strcmp(buff,"fact")==0){				//IDがfactなら
+		fread(&fact, sizeof(fact_chunk),1,read);	//fmtチャンクを読み込む
+	}
+
+	fread(&data, sizeof(data_chunk),1,read);//dataチャンクを読み込む
+/////////////////////////////////////////////////////
+// データの計算
+/////////////////////////////////////////////////////
+	fact.sample = data.size/(fmt.bit/8);	// 全サンプル数
+/////////////////////////////////////////////////////
+// 配列確保
+/////////////////////////////////////////////////////
+	pcm_data=(double *)calloc(fact.sample,sizeof(double));
+/////////////////////////////////////////////////////
+// データ読み込み
+/////////////////////////////////////////////////////
+	for(i=0;i<fact.sample;i++){
+		fread(&short_data,sizeof(short),1,read);
+		pcm_data[i]=short_data;
+	}
+/////////////////////////////////////////////////////
+// 情報の表示
+/////////////////////////////////////////////////////
+	printf("RIFF_size：%d\n",riff.size);
+	printf("fmt_channel ：%d\n",fmt.channel);
+	printf("サンプリング周波数：%d[Hz]\n",fmt.fs);
+	printf("量子化ビット数：%d[bit]\n",fmt.bit);
+	printf("データ数：%d[sample]\n",fact.sample);
+	printf("録音時間：%f[s]\n",(double)fact.sample/fmt.fs);
+/////////////////////////////////////////////////////
+// 時系列データ書き込み
+/////////////////////////////////////////////////////
+	for(i=0;i<fact.sample;i++)fprintf(write,"%f\n",pcm_data[i]);
+}
+
+/////////////////////////////////////////////////////
+// TEXT からWAVEへ変換する関数
+/////////////////////////////////////////////////////
+void text_to_wave(double *pcm_data, FILE *read, FILE *write)
+{
+	short short_data;
+	char buff[256];
+	unsigned long i;
+/////////////////////////////////////////////////////
+// TEXTファイルの行数チェック
+/////////////////////////////////////////////////////
+	fact.sample=0;
+	printf("サンプル数チェック中\n");
+	while(fgets(buff,256,read) != NULL) fact.sample++ ;//ファイルの行数チェック
+	printf("ファイルサンプル数%ld\n",fact.sample);
+/////////////////////////////////////////////////////
+// 配列確保
+/////////////////////////////////////////////////////
+	if((pcm_data=(double *)calloc(fact.sample,sizeof(double)))==NULL){printf("配列未確保\n");exit(0);}
+/////////////////////////////////////////////////////
+// TEXTデータの読み込み
+/////////////////////////////////////////////////////
+	fseek(read,0,SEEK_SET);	//ファイル読み込み位置をファイルの先頭へ
+	for(i=0;i<fact.sample;i++)fscanf(read,"%lf",&pcm_data[i]);
+/////////////////////////////////////////////////////
+// 書き込み用ヘッダ作成
+/////////////////////////////////////////////////////
+	strcpy(riff.id,"RIFF");
+	strcpy(riff.form,"WAVE");
+	strcpy(fmt.id,"fmt ");
+	strcpy(data.id,"data");
+	fmt.size = 16;
+	fmt.format_id = 1;
+	fmt.channel = 1;
+	fmt.fs = 11025;
+	fmt.byte_sec = 22050;
+	fmt.byte_samp = 2;
+	fmt.bit = 16;
+	data.size = fact.sample*fmt.byte_samp;
+	riff.size= 44+data.size -8;
+//////////////////////////////////////////////////////
+// wavePCMデータの書き込み
+/////////////////////////////////////////////////////
+	fwrite(&riff,sizeof(riff_chunk),1,write); //riffチャンクの書き込み
+	fwrite(&fmt,sizeof(fmt_chunk),1,write); //fmtチャンクの書き込み
+	fwrite(&data,sizeof(data_chunk),1,write); //dataチャンクの書き込み
+
+	for(i=0;i<fact.sample;i++){
+		short_data=(short)pcm_data[i];
+		fwrite(&short_data,sizeof(short),1,write);
+	}//short型で保存
+}
